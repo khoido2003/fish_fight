@@ -1,16 +1,80 @@
+
+use collections::storage;
+use macroquad::experimental::scene::{Node, RefMut};
 use macroquad::prelude::*;
 use macroquad_platformer::{Actor, Tile, World};
 use macroquad_tiled::{self as tiled, Map};
 
+#[derive(Debug)]
 struct Player {
     collider: Actor,
     speed: Vec2,
 }
 
-mod consts {
+struct Resources {
+    whale: Texture2D,
+    physics: World,
+}
+
+impl Player {
     pub const JUMP_SPEED: f32 = -700.0;
     pub const GRAVITY: f32 = 2000.0;
     pub const MOVE_SPEED: f32 = 300.0;
+
+    fn new() -> Player {
+        let mut resources = storage::get_mut::<Resources>();
+
+        Player {
+            collider: resources.physics.add_actor(vec2(200.0, 100.0), 36, 66),
+            speed: vec2(0.0, 0.0),
+        }
+    }
+}
+
+impl Node for Player {
+    fn draw(node: RefMut<Self>) {
+        let resources = storage::get_mut::<Resources>();
+        let pos = resources.physics.actor_pos(node.collider);
+
+        draw_texture_ex(
+            &resources.whale,
+            pos.x - 20.0,
+            pos.y,
+            WHITE,
+            DrawTextureParams {
+                source: Some(Rect::new(0.0, 0.0, 76.0, 66.0)),
+                ..Default::default()
+            },
+        );
+    }
+
+    fn update(mut node: RefMut<Self>) {
+        let world = &mut storage::get_mut::<Resources>().physics;
+
+        let pos = world.actor_pos(node.collider);
+        let on_ground = world.collide_check(node.collider, pos + vec2(0.0, 1.0));
+
+        if !on_ground {
+            node.speed.y += Self::GRAVITY * get_frame_time();
+        } else {
+            node.speed.y = 0.0;
+        }
+
+        if is_key_down(KeyCode::Right) {
+            node.speed.x = Self::MOVE_SPEED;
+        } else if is_key_down(KeyCode::Left) {
+            node.speed.x = -Self::MOVE_SPEED;
+        } else {
+            node.speed.x = 0.0;
+        }
+
+        if is_key_pressed(KeyCode::Space) && on_ground {
+            node.speed.y = Self::JUMP_SPEED;
+        }
+
+        world.move_v(node.collider, node.speed.y * get_frame_time());
+        world.move_h(node.collider, node.speed.x * get_frame_time());
+    }
 }
 
 #[macroquad::main("FishGame")]
@@ -75,8 +139,8 @@ async fn main() {
         }
     }
 
-    let mut world = World::new();
-    world.add_static_tiled_layer(
+    let mut physics = World::new();
+    physics.add_static_tiled_layer(
         static_colliders,
         tiled_map.raw_tiled_map.tilewidth as f32,
         tiled_map.raw_tiled_map.tileheight as f32,
@@ -84,10 +148,11 @@ async fn main() {
         1,
     );
 
-    let mut player = Player {
-        collider: world.add_actor(vec2(200.0, 100.0), 36, 66),
-        speed: vec2(0.0, 0.0),
-    };
+    let resources = Resources { whale, physics };
+    storage::store(resources);
+
+    let player = Player::new();
+    let player_handle = scene::add_node(player);
 
     let width = tiled_map.raw_tiled_map.tilewidth * tiled_map.raw_tiled_map.width;
     let height = tiled_map.raw_tiled_map.tileheight * tiled_map.raw_tiled_map.height;
@@ -95,48 +160,15 @@ async fn main() {
     loop {
         clear_background(BLACK);
 
+        let player = scene::get_node(player_handle);
+
         tiled_map.draw_tiles(
             "main layer",
             Rect::new(0.0, 0.0, width as _, height as _),
             None,
         );
 
-        let pos = world.actor_pos(player.collider);
-
-        draw_texture_ex(
-            &whale,
-            pos.x - 20.0,
-            pos.y,
-            WHITE,
-            DrawTextureParams {
-                source: Some(Rect::new(0.0, 0.0, 76., 66.)),
-                ..Default::default()
-            },
-        );
-
-        {
-            let pos = world.actor_pos(player.collider);
-            let on_ground = world.collide_check(player.collider, pos + vec2(0.0, 1.0));
-
-            if !on_ground {
-                player.speed.y += consts::GRAVITY * get_frame_time();
-            }
-
-            if is_key_down(KeyCode::Right) {
-                player.speed.x = consts::MOVE_SPEED;
-            } else if is_key_down(KeyCode::Left) {
-                player.speed.x = -consts::MOVE_SPEED;
-            } else {
-                player.speed.x = 0.;
-            }
-
-            if is_key_pressed(KeyCode::Space) && on_ground {
-                player.speed.y = consts::JUMP_SPEED;
-            }
-
-            world.move_h(player.collider, player.speed.x * get_frame_time());
-            world.move_v(player.collider, player.speed.y * get_frame_time());
-        }
+        Player::draw(player);
 
         next_frame().await;
     }
